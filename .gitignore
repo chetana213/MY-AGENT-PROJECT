@@ -6,3 +6,5 @@ pr_diff.txt
 review_comment.md
 precommit_review.json
 review_payload.json
+chroma_db/
+*.sqlite3
