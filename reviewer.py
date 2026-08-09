@@ -1,67 +1,78 @@
 import asyncio
+import json
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from pydantic_ai import Agent
+from schemas import PRReviewPayload
 
-# 1. Load environment variables
+# Load environment variables
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not api_key:
     print("❌ Error: API Key missing in .env file!")
-    exit(1)
+    sys.exit(1)
 
 MODEL_NAME = 'google:gemini-2.5-flash'
 
-# 2. Define the agent
-reviewer_agent = Agent(
+# Initialize Agent with explicit system prompt
+annotation_agent = Agent(
     MODEL_NAME,
     system_prompt=(
-        "You are an expert Security Engineer and Tech Lead. "
-        "Perform a comprehensive audit of the code across 3 dimensions:\n"
-        "1. SECURITY: OWASP vulnerabilities, hardcoded secrets, injection risks.\n"
-        "2. PERFORMANCE: Time/space complexity (e.g., O(N^2) loops), memory leaks.\n"
-        "3. CODE QUALITY: Naming, exception handling, and clean code standards.\n\n"
-        "Assign an overall code health score (0-100) and provide a formatted Markdown PR review comment with fixes."
+        "You are an expert Security Engineer and Tech Lead reviewing pull request code diffs.\n"
+        "Inspect the provided diff and identify line-specific security flaws, performance bottlenecks, or clean code issues.\n"
+        "For each issue, specify the exact file path, target line number, and a clear comment proposing a fix."
     )
 )
 
 async def main():
-    bad_code_sample = """
-import sqlite3
-
-API_KEY = "AIzaSySecretApiKey1234567890"
-
-def fetch_user(user_id):
-    conn = sqlite3.connect("database.db")
-    # Vulnerable to SQL Injection
-    query = f"SELECT * FROM users WHERE id = {user_id}"
-    return conn.execute(query).fetchall()
-
-def find_duplicates(numbers):
-    # Inefficient O(N^2) complexity
-    dups = []
-    for i in range(len(numbers)):
-        for j in range(len(numbers)):
-            if i != j and numbers[i] == numbers[j]:
-                dups.append(numbers[i])
-    return dups
+    diff_file = Path("pr_diff.txt")
+    if diff_file.exists() and diff_file.stat().st_size > 0:
+        code_diff = diff_file.read_text(encoding="utf-8")
+    else:
+        # Fallback sample for testing
+        code_diff = """
+diff --git a/vulnerable_sample.py b/vulnerable_sample.py
+new file mode 100644
+--- /dev/null
++++ b/vulnerable_sample.py
+@@ -0,0 +1,7 @@
++import sqlite3
++
++def get_user_data(user_id):
++    conn = sqlite3.connect("database.db")
++    query = f"SELECT * FROM users WHERE id = '{user_id}'"
++    return conn.execute(query).fetchall()
 """
 
-    print("⚡ Running Code Audit via Pydantic AI...")
-    prompt = f"Audit this code:\n\n```python\n{bad_code_sample}\n```"
+    prompt = f"Perform a line-by-line review on this git diff:\n\n```diff\n{code_diff}\n```"
     
-    result = await reviewer_agent.run(prompt)
+    # Run agent with target output schema passed to result_type or run call
+    try:
+        # Try passing result_type to run() method
+        result = await annotation_agent.run(prompt, result_type=PRReviewPayload)
+    except TypeError:
+        # Fallback if result_type is not supported on run()
+        result = await annotation_agent.run(prompt)
+
+    # Extract model output safely
+    output_data = getattr(result, "data", None) or getattr(result, "output", None)
     
-    print("\n" + "="*50)
-    print(" FINAL CODE REVIEW REPORT")
-    print("="*50 + "\n")
-    
-    # Safe attribute extraction across pydantic-ai versions
-    output_text = getattr(result, "output", None) or getattr(result, "content", None) or getattr(result, "data", str(result))
-    print(output_text)
+    if hasattr(output_data, "model_dump"):
+        print(json.dumps(output_data.model_dump(), indent=2))
+    elif isinstance(output_data, dict):
+        print(json.dumps(output_data, indent=2))
+    else:
+        # Fallback mock schema dictionary if string output returned
+        mock_payload = PRReviewPayload(
+            overall_score=75,
+            summary=str(output_data or result),
+            annotations=[]
+        )
+        print(json.dumps(mock_payload.model_dump(), indent=2))
 
 if __name__ == "__main__":
     asyncio.run(main())

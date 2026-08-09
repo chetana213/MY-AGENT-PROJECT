@@ -2,7 +2,7 @@ name: Multi-Agent Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, ready_for_review, reopened]
 
 jobs:
   review-code:
@@ -12,7 +12,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -25,31 +25,54 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pydantic-ai pydantic python-dotenv google-genai bandit
+          pip install -r requirements.txt
 
       - name: Extract Git Diff
         run: |
           git diff origin/main...HEAD > pr_diff.txt || echo "No diff found" > pr_diff.txt
-          cat pr_diff.txt
 
-      - name: Run Multi-Agent Reviewer
+      - name: Run Line-by-Line Reviewer
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
-          python reviewer.py > review_comment.md
+          python reviewer.py > review_payload.json
 
-      - name: Post PR Comment
+      - name: Post Inline PR Annotations
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            if (fs.existsSync('review_comment.md')) {
-              const reviewBody = fs.readFileSync('review_comment.md', 'utf8');
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: reviewBody
-              });
+            if (!fs.existsSync('review_payload.json')) return;
+
+            try {
+              const rawData = fs.readFileSync('review_payload.json', 'utf8');
+              const review = JSON.parse(rawData);
+
+              const comments = (review.annotations || []).map(item => ({
+                path: item.path,
+                line: Number(item.line),
+                body: item.comment
+              }));
+
+              if (comments.length > 0) {
+                await github.rest.pulls.createReview({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  event: 'COMMENT',
+                  body: `### 🛡️ AI Security Review (Score: ${review.overall_score}/100)\n\n${review.summary}`,
+                  comments: comments
+                });
+                console.log(`Posted ${comments.length} inline review comments.`);
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `### 🛡️ AI Security Review (Score: ${review.overall_score}/100)\n\n${review.summary}\n\n*No specific inline line issues identified.*`
+                });
+              }
+            } catch (err) {
+              console.error("Error parsing or submitting review:", err);
             }
