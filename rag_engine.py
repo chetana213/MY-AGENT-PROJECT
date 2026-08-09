@@ -1,46 +1,56 @@
 import os
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 
-from langchain_community.document_loaders import TextLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 
 load_dotenv()
 
 DB_DIR = "./chroma_db"
 RULES_FILE = "company_rules.md"
 
-def build_or_load_vectorstore():
-    """Indexes company_rules.md into ChromaDB using Gemini embeddings."""
+def get_embeddings_model():
+    """Initializes Google Gemini Embeddings using active model gemini-embedding-001."""
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     
-    # Initialize Google Gemini Embeddings
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
+    return GoogleGenerativeAIEmbeddings(
+        model="gemini-embedding-001",
         google_api_key=api_key
     )
 
-    if os.path.exists(DB_DIR):
-        # Load existing vector index from disk
+def build_or_load_vectorstore():
+    """Indexes company_rules.md into ChromaDB using Gemini embeddings."""
+    embeddings = get_embeddings_model()
+
+    if os.path.exists(DB_DIR) and os.path.exists(os.path.join(DB_DIR, "chroma.sqlite3")):
         vectorstore = Chroma(
             persist_directory=DB_DIR,
             embedding_function=embeddings
         )
     else:
-        # Load rulebook document
-        loader = TextLoader(RULES_FILE, encoding="utf-8")
-        documents = loader.load()
+        # Clear out any incomplete or corrupted DB folder
+        if os.path.exists(DB_DIR):
+            shutil.rmtree(DB_DIR, ignore_errors=True)
 
-        # Split text into manageable chunks
+        rule_path = Path(RULES_FILE)
+        if not rule_path.exists():
+            raise FileNotFoundError(f"{RULES_FILE} not found in root directory!")
+        
+        content = rule_path.read_text(encoding="utf-8")
+        documents = [Document(page_content=content, metadata={"source": RULES_FILE})]
+
+        # Chunk text
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50
+            chunk_size=400,
+            chunk_overlap=40
         )
         chunks = text_splitter.split_documents(documents)
 
-        # Build and persist vector index
+        # Build and persist Chroma index
         vectorstore = Chroma.from_documents(
             documents=chunks,
             embedding=embeddings,
@@ -61,7 +71,8 @@ def retrieve_relevant_rules(code_query: str, k: int = 2) -> str:
         return "No specific company policies retrieved."
 
 if __name__ == "__main__":
-    # Test query
+    print("⚡ Testing RAG retrieval with Gemini embeddings...")
     sample_code = "query = f'SELECT * FROM users WHERE id = {user_id}'"
     rules = retrieve_relevant_rules(sample_code)
-    print("🔍 Retrieved Context:\n", rules)
+    print("\n🔍 Retrieved Context:\n")
+    print(rules)

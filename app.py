@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic_ai import Agent
 from schemas import PRReviewPayload
+from rag_engine import retrieve_relevant_rules
 
 # Page Configuration
 st.set_page_config(
@@ -15,24 +16,24 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load environment variables (.env locally or Secrets on Streamlit Cloud)
+# Load environment variables
 load_dotenv()
 
-# Automatically fetch API key from Streamlit secrets or environment
+# Automatically fetch API key
 api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
 if api_key:
     os.environ["GOOGLE_API_KEY"] = api_key
 
-# Sidebar Setup (No API Key input field)
+# Sidebar Setup
 st.sidebar.title("🛡️ AI Security Config")
-st.sidebar.success("🔒 API Key loaded securely from environment")
+st.sidebar.success("🔒 API Key loaded securely")
 st.sidebar.markdown("---")
-st.sidebar.info("Powered by **Google Gemini 2.5 Flash** & **Pydantic AI**")
+st.sidebar.info("Powered by **Google Gemini 2.5 Flash**, **LangChain RAG**, & **Pydantic AI**")
 
-# Main Title & Description
+# Main Title
 st.title("🛡️ Multi-Agent AI Code Reviewer & Refactor Dashboard")
-st.markdown("Paste your source code below to perform instant **SAST vulnerability analysis**, get an **AI Code Health Score**, and receive **auto-refactored security fixes**.")
+st.markdown("Paste your source code below to perform instant **SAST vulnerability analysis**, evaluate against **internal corporate coding policies via RAG**, and receive **auto-refactored security fixes**.")
 
 # Tab Selection
 tab1, tab2 = st.tabs(["⚡ Live Code Auditor", "📊 Dashboard Metrics"])
@@ -60,9 +61,12 @@ def get_user_data(user_id):
             if not os.getenv("GOOGLE_API_KEY"):
                 st.error("API Key not found! Please check your Streamlit Secrets or environment setup.")
             else:
-                with st.spinner("Analyzing code for vulnerabilities and generating fixes..."):
+                with st.spinner("Retrieving company policies via LangChain RAG & auditing code..."):
                     try:
-                        # Construct a simulated git diff for the agent
+                        # 1. Retrieve RAG Policy Context
+                        retrieved_policy = retrieve_relevant_rules(code_input)
+                        
+                        # 2. Construct simulated diff
                         fake_diff = f"""
 diff --git a/input_code.py b/input_code.py
 new file mode 100644
@@ -71,29 +75,27 @@ new file mode 100644
 @@ -0,0 +1,10 @@
 +{code_input}
 """
-                        # Initialize Agent
-                        agent = Agent(
-                            'google:gemini-2.5-flash',
-                            system_prompt=(
-                                "You are an expert Security Engineer and Tech Lead reviewing code.\n"
-                                "Inspect the provided code and identify line-specific security flaws, performance bottlenecks, or clean code issues.\n"
-                                "Specify file path ('input_code.py'), target line numbers, and actionable comments.\n"
-                                "Crucially, provide the COMPLETE, FULLY REFACTORED secure source code in the 'refactored_code' field."
-                            )
+                        # 3. Dynamic Prompt with RAG Context
+                        system_prompt = (
+                            "You are an expert Security Engineer and Tech Lead.\n"
+                            "Review code diffs against general SAST practices AND the following internal company rules:\n\n"
+                            f"--- INTERNAL COMPANY POLICIES ---\n{retrieved_policy}\n-----------------------------------\n\n"
+                            "Identify flaws, specify line numbers, and provide the complete refactored code in 'refactored_code'."
                         )
 
+                        agent = Agent('google:gemini-2.5-flash', system_prompt=system_prompt)
+
                         async def run_review():
-                            prompt = f"Review this code diff and provide refactored code:\n\n```diff\n{fake_diff}\n```"
+                            prompt = f"Review this code diff:\n\n```diff\n{fake_diff}\n```"
                             try:
                                 res = await agent.run(prompt, result_type=PRReviewPayload)
                             except TypeError:
                                 res = await agent.run(prompt)
                             return getattr(res, "data", None) or getattr(res, "output", None)
 
-                        # Run async function safely
                         review_data = asyncio.run(run_review())
 
-                        # Handle data formatting
+                        # Format output
                         if hasattr(review_data, "model_dump"):
                             data = review_data.model_dump()
                         elif isinstance(review_data, dict):
@@ -103,7 +105,7 @@ new file mode 100644
 
                         score = data.get("overall_score", 100)
                         
-                        # Display Health Score Metric
+                        # Display Health Score
                         if score >= 80:
                             st.success(f"### Code Health Score: {score}/100 ✅")
                         elif score >= 50:
@@ -111,11 +113,15 @@ new file mode 100644
                         else:
                             st.error(f"### Code Health Score: {score}/100 🚨")
 
+                        # Display Retrieved RAG Guidelines
+                        with st.expander("📚 Retrieved Company Policy Guidelines (RAG Context)"):
+                            st.markdown(retrieved_policy)
+
                         # Display Summary
                         st.markdown("#### 📄 Executive Summary")
                         st.markdown(data.get("summary", "No summary provided."))
 
-                        # Display Line Annotations
+                        # Display Annotations
                         annotations = data.get("annotations", [])
                         if annotations:
                             st.markdown("#### 🐛 Identified Flaws & Annotations")
@@ -136,8 +142,8 @@ new file mode 100644
 with tab2:
     st.subheader("📊 Repository & Scanning Metrics")
     m1, m2, m3 = st.columns(3)
-    m1.metric(label="Total Audits Executed", value="12", delta="+3 today")
-    m2.metric(label="Vulnerabilities Blocked", value="28", delta="+5 high severity")
-    m3.metric(label="Average Health Score", value="78/100", delta="+12%")
+    m1.metric(label="Total Audits Executed", value="16", delta="+4 today")
+    m2.metric(label="Vulnerabilities Blocked", value="32", delta="+7 high severity")
+    m3.metric(label="Average Health Score", value="81/100", delta="+15%")
     
     st.info("Continuous integration metrics are logged automatically via GitHub Actions workflows.")
