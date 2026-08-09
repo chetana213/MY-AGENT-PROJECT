@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from pydantic_ai import Agent
 from schemas import PRReviewPayload
 
-# Load environment variables
+# Load environment
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
@@ -18,13 +18,13 @@ if not api_key:
 
 MODEL_NAME = 'google:gemini-2.5-flash'
 
-# Initialize Agent with explicit system prompt
 annotation_agent = Agent(
     MODEL_NAME,
     system_prompt=(
         "You are an expert Security Engineer and Tech Lead reviewing pull request code diffs.\n"
         "Inspect the provided diff and identify line-specific security flaws, performance bottlenecks, or clean code issues.\n"
-        "For each issue, specify the exact file path, target line number, and a clear comment proposing a fix."
+        "For each issue, specify the exact file path, target line number, and a clear comment proposing a fix.\n"
+        "Crucially, provide the COMPLETE, FULLY REFACTORED and secure Python source code in the 'refactored_code' field."
     )
 )
 
@@ -33,7 +33,6 @@ async def main():
     if diff_file.exists() and diff_file.stat().st_size > 0:
         code_diff = diff_file.read_text(encoding="utf-8")
     else:
-        # Fallback sample for testing
         code_diff = """
 diff --git a/vulnerable_sample.py b/vulnerable_sample.py
 new file mode 100644
@@ -48,25 +47,24 @@ new file mode 100644
 +    return conn.execute(query).fetchall()
 """
 
-    prompt = f"Perform a line-by-line review on this git diff:\n\n```diff\n{code_diff}\n```"
+    prompt = f"Perform a line-by-line review on this git diff and provide the complete refactored code fix:\n\n```diff\n{code_diff}\n```"
     
-    # Run agent with target output schema passed to result_type or run call
     try:
-        # Try passing result_type to run() method
         result = await annotation_agent.run(prompt, result_type=PRReviewPayload)
     except TypeError:
-        # Fallback if result_type is not supported on run()
         result = await annotation_agent.run(prompt)
 
-    # Extract model output safely
     output_data = getattr(result, "data", None) or getattr(result, "output", None)
     
+    # Save the refactored code to disk if present
+    if hasattr(output_data, "refactored_code") and output_data.refactored_code:
+        Path("refactored_patch.py").write_text(output_data.refactored_code, encoding="utf-8")
+
     if hasattr(output_data, "model_dump"):
         print(json.dumps(output_data.model_dump(), indent=2))
     elif isinstance(output_data, dict):
         print(json.dumps(output_data, indent=2))
     else:
-        # Fallback mock schema dictionary if string output returned
         mock_payload = PRReviewPayload(
             overall_score=75,
             summary=str(output_data or result),

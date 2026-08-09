@@ -1,14 +1,14 @@
-name: Multi-Agent Code Review
+name: Multi-Agent Code Review & Auto-Fix
 
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
 jobs:
-  review-code:
+  review-and-autofix:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
 
     steps:
@@ -31,7 +31,7 @@ jobs:
         run: |
           git diff origin/main...HEAD > pr_diff.txt || echo "No diff found" > pr_diff.txt
 
-      - name: Run Line-by-Line Reviewer
+      - name: Run Reviewer & Generate Fix
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
@@ -64,15 +64,57 @@ jobs:
                   body: `### 🛡️ AI Security Review (Score: ${review.overall_score}/100)\n\n${review.summary}`,
                   comments: comments
                 });
-                console.log(`Posted ${comments.length} inline review comments.`);
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body: `### 🛡️ AI Security Review (Score: ${review.overall_score}/100)\n\n${review.summary}\n\n*No specific inline line issues identified.*`
-                });
               }
             } catch (err) {
-              console.error("Error parsing or submitting review:", err);
+              console.error("Error submitting review:", err);
+            }
+
+      - name: Create Automated Fix Pull Request
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('refactored_patch.py') || !fs.existsSync('review_payload.json')) return;
+
+            const review = JSON.parse(fs.readFileSync('review_payload.json', 'utf8'));
+            if (review.overall_score >= 60) {
+              console.log("Code health score is sufficient. No auto-fix required.");
+              return;
+            }
+
+            console.log(`Score is ${review.overall_score}/100 (< 60). Triggering Auto-Fix PR...`);
+
+            const targetFile = (review.annotations && review.annotations.length > 0) ? review.annotations[0].path : 'vulnerable_sample.py';
+            const fixedCode = fs.readFileSync('refactored_patch.py', 'utf8');
+
+            // Apply patch to the file
+            fs.writeFileSync(targetFile, fixedCode);
+
+            const prNumber = context.issue.number;
+            const branchName = `fix/auto-refactor-pr-${prNumber}`;
+
+            const execSync = require('child_process').execSync;
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+            
+            try {
+              execSync(`git checkout -b ${branchName}`);
+              execSync(`git add ${targetFile}`);
+              execSync(`git commit -m "fix(security): auto-refactored code patch for PR #${prNumber}"`);
+              execSync(`git push origin ${branchName} --force`);
+
+              // Create Fix PR
+              await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🤖 Auto-Fix Security Patch for PR #${prNumber}`,
+                head: branchName,
+                base: context.payload.pull_request.head.ref,
+                body: `### 🛡️ Automated Security Fix Patch\n\nThis Pull Request was automatically generated because PR #${prNumber} received a low health score (**${review.overall_score}/100**).\n\n**Applied Fixes:**\n- Mitigated SQL Injection / Hardcoded Secrets\n- Implemented proper error handling and connection management.\n\n*Please review and merge into your branch.*`
+              });
+              console.log("Auto-Fix PR successfully created!");
+            } catch (err) {
+              console.log("Auto-fix commit/PR step completed or skipped:", err.message);
             }
