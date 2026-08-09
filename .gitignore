@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 pr_diff.txt
 review_comment.md
+precommit_review.json
+review_payload.json
