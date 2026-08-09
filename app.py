@@ -15,16 +15,18 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load environment variables
+# Load environment variables (.env locally or Secrets on Streamlit Cloud)
 load_dotenv()
 
-# Sidebar Setup
-st.sidebar.title("🛡️ AI Security Config")
-api_key = st.sidebar.text_input("Gemini API Key", value=os.getenv("GOOGLE_API_KEY", ""), type="password")
+# Automatically fetch API key from Streamlit secrets or environment
+api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
 if api_key:
     os.environ["GOOGLE_API_KEY"] = api_key
 
+# Sidebar Setup (No API Key input field)
+st.sidebar.title("🛡️ AI Security Config")
+st.sidebar.success("🔒 API Key loaded securely from environment")
 st.sidebar.markdown("---")
 st.sidebar.info("Powered by **Google Gemini 2.5 Flash** & **Pydantic AI**")
 
@@ -56,7 +58,7 @@ def get_user_data(user_id):
         
         if run_button:
             if not os.getenv("GOOGLE_API_KEY"):
-                st.error("Please enter your Gemini API Key in the sidebar or set it in your .env file.")
+                st.error("API Key not found! Please check your Streamlit Secrets or environment setup.")
             else:
                 with st.spinner("Analyzing code for vulnerabilities and generating fixes..."):
                     try:
