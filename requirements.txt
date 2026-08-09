@@ -1,0 +1,6 @@
+pydantic-ai
+pydantic
+python-dotenv
+google-genai
+bandit
+streamlit
