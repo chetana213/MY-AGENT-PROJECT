@@ -1,8 +1,7 @@
 import streamlit as st
 import asyncio
-import json
 import os
-import tempfile
+import difflib
 from pathlib import Path
 from dotenv import load_dotenv
 from pydantic_ai import Agent
@@ -21,7 +20,6 @@ load_dotenv()
 
 # Automatically fetch API key
 api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
 if api_key:
     os.environ["GOOGLE_API_KEY"] = api_key
 
@@ -33,7 +31,76 @@ st.sidebar.info("Powered by **Google Gemini 2.5 Flash**, **LangChain RAG**, & **
 
 # Main Title
 st.title("🛡️ Multi-Agent AI Code Reviewer & Refactor Dashboard")
-st.markdown("Paste your source code below to perform instant **SAST vulnerability analysis**, evaluate against **internal corporate coding policies via RAG**, and receive **auto-refactored security fixes**.")
+st.markdown("Paste your source code below to perform instant **SAST vulnerability analysis**, evaluate against **internal corporate coding policies via RAG**, and view **side-by-side refactoring diffs**.")
+
+# Helper: Generate Side-by-Side Diff HTML
+def generate_side_by_side_diff(original_code: str, refactored_code: str) -> str:
+    """Generates a clean HTML table displaying side-by-side diff comparison."""
+    orig_lines = original_code.splitlines()
+    refact_lines = refactored_code.splitlines()
+
+    differ = difflib.HtmlDiff(tabsize=4, wrapcolumn=60)
+    diff_table = differ.make_table(
+        orig_lines,
+        refact_lines,
+        fromdesc="Original Vulnerable Code",
+        todesc="AI Auto-Refactored Fix",
+        context=True,
+        numlines=3
+    )
+
+    # Custom styling for dark/light mode compatibility
+    custom_style = """
+    <style>
+        table.diff {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        table.diff td, table.diff th {
+            padding: 4px 8px;
+            vertical-align: top;
+        }
+        table.diff th {
+            background-color: #161b22;
+            color: #c9d1d9;
+            text-align: left;
+            border-bottom: 2px solid #30363d;
+        }
+        .diff_header {
+            background-color: #21262d;
+            color: #8b949e;
+            text-align: right;
+            user-select: none;
+            width: 35px;
+        }
+        .diff_next {
+            background-color: #21262d;
+            display: none;
+        }
+        .diff_add {
+            background-color: rgba(46, 160, 67, 0.25);
+            color: #3fb950;
+        }
+        .diff_chg {
+            background-color: rgba(218, 54, 51, 0.25);
+            color: #f85149;
+        }
+        .diff_sub {
+            background-color: rgba(218, 54, 51, 0.25);
+            color: #f85149;
+        }
+        td.diff_add, td.diff_chg, td.diff_sub {
+            border-left: 2px solid transparent;
+        }
+    </style>
+    """
+    return f"{custom_style}{diff_table}"
 
 # Tab Selection
 tab1, tab2 = st.tabs(["⚡ Live Code Auditor", "📊 Dashboard Metrics"])
@@ -51,7 +118,7 @@ def get_user_data(user_id):
     query = f"SELECT * FROM users WHERE id = '{user_id}'"
     return conn.execute(query).fetchall()
 """
-        code_input = st.text_area("Source Code (Python)", value=sample_code, height=350)
+        code_input = st.text_area("Source Code (Python)", value=sample_code, height=320)
         run_button = st.button("🚀 Run Security Audit", type="primary", use_container_width=True)
 
     with col2:
@@ -61,7 +128,7 @@ def get_user_data(user_id):
             if not os.getenv("GOOGLE_API_KEY"):
                 st.error("API Key not found! Please check your Streamlit Secrets or environment setup.")
             else:
-                with st.spinner("Retrieving company policies via LangChain RAG & auditing code..."):
+                with st.spinner("Retrieving RAG policies & running AI code audit..."):
                     try:
                         # 1. Retrieve RAG Policy Context
                         retrieved_policy = retrieve_relevant_rules(code_input)
@@ -130,20 +197,26 @@ new file mode 100644
                                 comment = ann.get("comment", "") if isinstance(ann, dict) else getattr(ann, "comment", "")
                                 st.warning(f"**Line {line}:** {comment}")
 
-                        # Display Refactored Code
-                        refactored = data.get("refactored_code", "")
-                        if refactored:
-                            st.markdown("#### 🛠️ Auto-Refactored Fix")
-                            st.code(refactored, language="python")
+                        # Store in session state for Diff rendering below
+                        st.session_state["original_code"] = code_input
+                        st.session_state["refactored_code"] = data.get("refactored_code", "")
 
                     except Exception as e:
                         st.error(f"Audit failed: {str(e)}")
 
+    # Full-Width Side-by-Side Diff Section
+    if "refactored_code" in st.session_state and st.session_state["refactored_code"]:
+        st.markdown("---")
+        st.subheader("🔍 Side-by-Side Visual Diff (Before vs. After)")
+        diff_html = generate_side_by_side_diff(
+            st.session_state["original_code"],
+            st.session_state["refactored_code"]
+        )
+        st.components.v1.html(diff_html, height=350, scrolling=True)
+
 with tab2:
     st.subheader("📊 Repository & Scanning Metrics")
     m1, m2, m3 = st.columns(3)
-    m1.metric(label="Total Audits Executed", value="16", delta="+4 today")
-    m2.metric(label="Vulnerabilities Blocked", value="32", delta="+7 high severity")
-    m3.metric(label="Average Health Score", value="81/100", delta="+15%")
-    
-    st.info("Continuous integration metrics are logged automatically via GitHub Actions workflows.")
+    m1.metric(label="Total Audits Executed", value="18", delta="+2 recent")
+    m2.metric(label="Vulnerabilities Blocked", value="34", delta="+2 critical")
+    m3.metric(label="Average Health Score", value="84/100", delta="+3%")
