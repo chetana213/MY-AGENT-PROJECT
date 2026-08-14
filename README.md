@@ -25,20 +25,25 @@
 ## 🏗️ Architecture & Pipeline Flow
 
 ```mermaid
-graph TD
+flowchart TD
     A[User Python Code] --> B[AST Syntax Pre-Validation]
     B --> C[RAG Policy Retrieval via ChromaDB]
     C -.-> R[company_rules.md]
-    C --> D[SAST Security Analysis Agent - Gemini 2.5 Flash]
+    C --> D[SAST Security Analysis Agent]
     D --> E[Structured FindingItems]
     D --> F[Deterministic Score Engine]
     D --> G[Targeted Refactoring Agent]
-    G --> H[AST Syntax Verification - ast.parse]
-    H --> I[Security Re-Scan Verification Agent]
+    G --> H[AST Syntax Verification]
+    H --> I[Security Re-Scan Verification]
     I --> J[Verified Fixes Count]
     I --> K[Side-by-Side Unified Diff]
-    I --> L[Interactive AI Security Lead Context]
-    I --> M[Exportable Markdown Audit Report]
+    I --> L[Interactive AI Security Lead]
+    I --> M[Exportable Markdown Report]
+```
+
+---
+
+## 🚀 Getting Started
 
 ## 🚀 Getting Started
 
